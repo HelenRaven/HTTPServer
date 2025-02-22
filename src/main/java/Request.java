@@ -1,17 +1,24 @@
+import org.apache.http.NameValuePair;
+
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class Request {
     private String method;
     private String path;
+    private Map<String, String> queryParams;
     private List<String> headers = new ArrayList<>();
-   // private String body;
+    private String body;
+    private List<NameValuePair> postParams = new ArrayList<>();
 
-    public Request(String method, String path, List<String> headers) {
+    public Request(String method, String path, Map<String, String> queryParams, List<String> headers, String body, List<NameValuePair> postParams) {
         this.method = method;
         this.path = path;
+        this.queryParams = queryParams;
         this.headers = headers;
-       // this.body = body;
+        this.body = body;
+        this.postParams = postParams;
     }
 
     public Request(){}
@@ -24,13 +31,21 @@ public class Request {
         this.path = path;
     }
 
+    public void setQueryParams(Map<String, String> queryParams) {
+        this.queryParams = queryParams;
+    }
+
     public void setHeaders(List<String> headers) {
         this.headers = headers;
     }
 
-  //  public void setBody(String body) {
-  //      this.body = body;
- //   }
+    public void setBody(String body) {
+        this.body = body;
+    }
+
+    public void setPostParams(List<NameValuePair> postParams) {
+        this.postParams = postParams;
+    }
 
     public String getMethod() {
         return method;
@@ -40,11 +55,32 @@ public class Request {
         return path;
     }
 
+    public Map<String, String> getQueryParams() {
+        return queryParams;
+    }
+
+    public String getQueryParam(String name) {
+        return queryParams.get(name);
+    }
+
     public List<String> getHeaders() {
         return headers;
     }
 
-  //  public String getBody() {
-  //      return body;
-  //  }
+    public String getBody() {
+        return body;
+    }
+
+    public List<NameValuePair> getPostParams() {
+        return postParams;
+    }
+
+    public String getPostParam(String name) {
+        for (NameValuePair param : postParams) {
+            if(param.getName().equals(name))
+                return param.getValue();
+        }
+        return null;
+    }
+
 }

@@ -1,11 +1,19 @@
+import org.apache.commons.codec.Charsets;
+import org.apache.http.NameValuePair;
+import org.apache.http.client.utils.URLEncodedUtils;
+import org.apache.http.message.BasicNameValuePair;
+
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -42,7 +50,7 @@ public class Server {
 
     private static class ClientHandler implements Runnable {
         private BufferedOutputStream out;
-        private BufferedReader in;
+        private BufferedInputStream in;
         private final Server server;
 
         public ClientHandler(Socket socket, Server server){
@@ -50,7 +58,7 @@ public class Server {
 
             try {
                 out = new BufferedOutputStream(socket.getOutputStream());
-                in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                in = new BufferedInputStream(socket.getInputStream());
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -59,72 +67,138 @@ public class Server {
         @Override
         public void run() {
             try {
-                final String requestLine = in.readLine();
-                final String[] parts = requestLine.split(" ");
+                // лимит на request line + заголовки
+                final int limit = 4096;
 
-                if (parts.length != 3) {
+                in.mark(limit);
+                final byte[] buffer = new byte[limit];
+                final int read = in.read(buffer);
+
+                // ищем request line
+                final byte[] requestLineDelimiter = new byte[]{'\r', '\n'};
+                final int requestLineEnd = indexOf(buffer, requestLineDelimiter, 0, read);
+                if (requestLineEnd == -1) {
                     badRequest(out);
                     return;
                 }
 
-                final String method = parts[0];
+                // читаем request line
+                final String[] requestLine = new String(Arrays.copyOf(buffer, requestLineEnd)).split(" ");
+                if (requestLine.length != 3) {
+                    badRequest(out);
+                    return;
+                }
+
+                final String method = requestLine[0];
                 if (!allowedMethods.contains(method)) {
                     badRequest(out);
                     return;
                 }
+                System.out.println(method);
 
-                final String path = parts[1];
+                String path = requestLine[1];
                 if (!path.startsWith("/")) {
                     badRequest(out);
                     return;
                 }
+                System.out.println(path);
 
-                String handlerKey = method + path;
-                if (!server.validPaths.contains(path) && !server.handlers.containsKey(handlerKey)) {
-                    notFound(out);
+                List<NameValuePair> params = URLEncodedUtils.parse(new URI(path), Charset.forName("UTF-8"));
+                Map<String, String> mapParams = new HashMap<>();
+
+                for (NameValuePair param : params) {
+                    System.out.println(param.getName() + " : " + param.getValue());
+                    mapParams.put(param.getName(), param.getValue());
+                }
+
+                path = path.split("\\?")[0];
+
+                // ищем заголовки
+                final byte[] headersDelimiter = new byte[]{'\r', '\n', '\r', '\n'};
+                final int headersStart = requestLineEnd + requestLineDelimiter.length;
+                final int headersEnd = indexOf(buffer, headersDelimiter, headersStart, read);
+                if (headersEnd == -1) {
+                    badRequest(out);
                     return;
                 }
 
-                if (server.validPaths.contains(path)){
-                    final Path filePath = Path.of(".", "public", path);
-                    final String mimeType = Files.probeContentType(filePath);
+                // отматываем на начало буфера
+                in.reset();
+                // пропускаем requestLine
+                in.skip(headersStart);
 
-                    if (path.equals("/classic.html")) {
-                        final String template = Files.readString(filePath);
-                        final byte[] content = template.replace(
-                                "{time}",
-                                LocalDateTime.now().toString()
-                        ).getBytes();
-                        out.write((
-                                "HTTP/1.1 200 OK\r\n" +
-                                        "Content-Type: " + mimeType + "\r\n" +
-                                        "Content-Length: " + content.length + "\r\n" +
-                                        "Connection: close\r\n" +
-                                        "\r\n"
-                        ).getBytes());
-                        out.write(content);
-                        out.flush();
-                        return;
+                final byte[] headersBytes = in.readNBytes(headersEnd - headersStart);
+                final List<String> headers = Arrays.asList(new String(headersBytes).split("\r\n"));
+                System.out.println(headers);
+
+                // для GET тела нет
+                String body = "";
+                if (!method.equals("GET")) {
+                    in.skip(headersDelimiter.length);
+                    // вычитываем Content-Length, чтобы прочитать body
+                    final Optional<String> contentLength = extractHeader(headers, "Content-Length");
+                    if (contentLength.isPresent()) {
+                        final int length = Integer.parseInt(contentLength.get());
+                        final byte[] bodyBytes = in.readNBytes(length);
+
+                        body = new String(bodyBytes, StandardCharsets.UTF_8);
+                        System.out.println(body);
                     }
-
-                    final long length = Files.size(filePath);
-                    OK(out, mimeType, length, filePath);
                 }
 
-                List<String> headers = new ArrayList<>();
-                String header = in.readLine();
-                while(!header.isEmpty()) {
-                    headers.add(header);
-                    header = in.readLine();
+                final Optional<String> contentType = extractHeader(headers, "Content-Type");
+                System.out.println(contentType.get());
+                if (contentType.get().equals("application/x-www-form-urlencoded") && !body.isEmpty()) {
+                    List<NameValuePair> postParams = new ArrayList<>();
+                    String[] bodyParams = body.split("&");
+                    for (String param : bodyParams) {
+                        String[] keyValue = param.split("=");
+                        postParams.add(new BasicNameValuePair(keyValue[0], keyValue[1]));
+                    }
+                    for (NameValuePair param : postParams) {
+                        System.out.println(param.getName() + " : " + param.getValue());
+                    }
                 }
 
-                Request request = new Request(method, path, headers);
-                server.handlers.get(handlerKey).handle(request, out);
+
+//                String handlerKey = method + path;
+//                if (!server.validPaths.contains(path) && !server.handlers.containsKey(handlerKey)) {
+//                    notFound(out);
+//                    return;
+//                }
+//
+//                if (server.validPaths.contains(path)){
+//                    final Path filePath = Path.of(".", "public", path);
+//                    final String mimeType = Files.probeContentType(filePath);
+//
+//                    if (path.equals("/classic.html")) {
+//                        final String template = Files.readString(filePath);
+//                        final byte[] content = template.replace(
+//                                "{time}",
+//                                LocalDateTime.now().toString()
+//                        ).getBytes();
+//                        out.write((
+//                                "HTTP/1.1 200 OK\r\n" +
+//                                        "Content-Type: " + mimeType + "\r\n" +
+//                                        "Content-Length: " + content.length + "\r\n" +
+//                                        "Connection: close\r\n" +
+//                                        "\r\n"
+//                        ).getBytes());
+//                        out.write(content);
+//                        out.flush();
+//                        return;
+//                    }
+//
+//                    final long length = Files.size(filePath);
+//                    OK(out, mimeType, length, filePath);
+//                }
+//
+//                Request request = new Request(method, path, mapParams, headers, body);
+//                server.handlers.get(handlerKey).handle(request, out);
 
 
-            } catch (IOException e) {
+            } catch (URISyntaxException | IOException e) {
                 e.printStackTrace();
-
             }
         }
 
@@ -159,6 +233,27 @@ public class Server {
             if (filePath != null)
                 Files.copy(filePath, out);
             out.flush();
+        }
+
+        private static int indexOf(byte[] array, byte[] target, int start, int max) {
+            outer:
+            for (int i = start; i < max - target.length + 1; i++) {
+                for (int j = 0; j < target.length; j++) {
+                    if (array[i + j] != target[j]) {
+                        continue outer;
+                    }
+                }
+                return i;
+            }
+            return -1;
+        }
+
+        private static Optional<String> extractHeader(List<String> headers, String header) {
+            return headers.stream()
+                    .filter(o -> o.startsWith(header))
+                    .map(o -> o.substring(o.indexOf(" ")))
+                    .map(String::trim)
+                    .findFirst();
         }
     }
 }
