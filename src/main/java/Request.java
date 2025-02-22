@@ -10,13 +10,15 @@ public class Request {
     private Map<String, String> queryParams;
     private List<String> headers = new ArrayList<>();
     private String body;
+    private List<NameValuePair> postParams = new ArrayList<>();
 
-    public Request(String method, String path, Map<String, String> queryParams, List<String> headers, String body) {
+    public Request(String method, String path, Map<String, String> queryParams, List<String> headers, String body, List<NameValuePair> postParams) {
         this.method = method;
         this.path = path;
         this.queryParams = queryParams;
         this.headers = headers;
         this.body = body;
+        this.postParams = postParams;
     }
 
     public Request(){}
@@ -29,7 +31,7 @@ public class Request {
         this.path = path;
     }
 
-    public void setParams(Map<String, String> queryParams) {
+    public void setQueryParams(Map<String, String> queryParams) {
         this.queryParams = queryParams;
     }
 
@@ -39,6 +41,10 @@ public class Request {
 
     public void setBody(String body) {
         this.body = body;
+    }
+
+    public void setPostParams(List<NameValuePair> postParams) {
+        this.postParams = postParams;
     }
 
     public String getMethod() {
@@ -64,4 +70,17 @@ public class Request {
     public String getBody() {
         return body;
     }
+
+    public List<NameValuePair> getPostParams() {
+        return postParams;
+    }
+
+    public String getPostParam(String name) {
+        for (NameValuePair param : postParams) {
+            if(param.getName().equals(name))
+                return param.getValue();
+        }
+        return null;
+    }
+
 }

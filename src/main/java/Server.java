@@ -1,5 +1,7 @@
+import org.apache.commons.codec.Charsets;
 import org.apache.http.NameValuePair;
 import org.apache.http.client.utils.URLEncodedUtils;
+import org.apache.http.message.BasicNameValuePair;
 
 import java.io.*;
 import java.net.ServerSocket;
@@ -7,6 +9,7 @@ import java.net.Socket;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
@@ -138,45 +141,60 @@ public class Server {
                         final int length = Integer.parseInt(contentLength.get());
                         final byte[] bodyBytes = in.readNBytes(length);
 
-                        body = new String(bodyBytes);
+                        body = new String(bodyBytes, StandardCharsets.UTF_8);
                         System.out.println(body);
                     }
                 }
 
-                String handlerKey = method + path;
-                if (!server.validPaths.contains(path) && !server.handlers.containsKey(handlerKey)) {
-                    notFound(out);
-                    return;
-                }
-
-                if (server.validPaths.contains(path)){
-                    final Path filePath = Path.of(".", "public", path);
-                    final String mimeType = Files.probeContentType(filePath);
-
-                    if (path.equals("/classic.html")) {
-                        final String template = Files.readString(filePath);
-                        final byte[] content = template.replace(
-                                "{time}",
-                                LocalDateTime.now().toString()
-                        ).getBytes();
-                        out.write((
-                                "HTTP/1.1 200 OK\r\n" +
-                                        "Content-Type: " + mimeType + "\r\n" +
-                                        "Content-Length: " + content.length + "\r\n" +
-                                        "Connection: close\r\n" +
-                                        "\r\n"
-                        ).getBytes());
-                        out.write(content);
-                        out.flush();
-                        return;
+                final Optional<String> contentType = extractHeader(headers, "Content-Type");
+                System.out.println(contentType.get());
+                if (contentType.get().equals("application/x-www-form-urlencoded") && !body.isEmpty()) {
+                    List<NameValuePair> postParams = new ArrayList<>();
+                    String[] bodyParams = body.split("&");
+                    for (String param : bodyParams) {
+                        String[] keyValue = param.split("=");
+                        postParams.add(new BasicNameValuePair(keyValue[0], keyValue[1]));
                     }
-
-                    final long length = Files.size(filePath);
-                    OK(out, mimeType, length, filePath);
+                    for (NameValuePair param : postParams) {
+                        System.out.println(param.getName() + " : " + param.getValue());
+                    }
                 }
 
-                Request request = new Request(method, path, mapParams, headers, body);
-                server.handlers.get(handlerKey).handle(request, out);
+
+//                String handlerKey = method + path;
+//                if (!server.validPaths.contains(path) && !server.handlers.containsKey(handlerKey)) {
+//                    notFound(out);
+//                    return;
+//                }
+//
+//                if (server.validPaths.contains(path)){
+//                    final Path filePath = Path.of(".", "public", path);
+//                    final String mimeType = Files.probeContentType(filePath);
+//
+//                    if (path.equals("/classic.html")) {
+//                        final String template = Files.readString(filePath);
+//                        final byte[] content = template.replace(
+//                                "{time}",
+//                                LocalDateTime.now().toString()
+//                        ).getBytes();
+//                        out.write((
+//                                "HTTP/1.1 200 OK\r\n" +
+//                                        "Content-Type: " + mimeType + "\r\n" +
+//                                        "Content-Length: " + content.length + "\r\n" +
+//                                        "Connection: close\r\n" +
+//                                        "\r\n"
+//                        ).getBytes());
+//                        out.write(content);
+//                        out.flush();
+//                        return;
+//                    }
+//
+//                    final long length = Files.size(filePath);
+//                    OK(out, mimeType, length, filePath);
+//                }
+//
+//                Request request = new Request(method, path, mapParams, headers, body);
+//                server.handlers.get(handlerKey).handle(request, out);
 
 
             } catch (URISyntaxException | IOException e) {
